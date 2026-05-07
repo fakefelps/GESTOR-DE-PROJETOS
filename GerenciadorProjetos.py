@@ -136,7 +136,7 @@ class DataStore:
 
     def criar_task(self, titulo, pasta, disciplina, resp_id, prazo, autor_id):
         t = {"id": str(uuid.uuid4()), "titulo": titulo, "pasta": pasta,
-             "disciplina": disciplina, "resp_id": resp_id, "prazo": prazo,
+             "disciplina": disciplina, "resp_ids": resp_id if isinstance(resp_id, list) else ([resp_id] if resp_id else []), "prazo": prazo,
              "status": "EM ANDAMENTO", "autor_id": autor_id,
              "criado": datetime.now().isoformat(),
              "atualizado": datetime.now().isoformat(), "msgs": []}
@@ -1032,7 +1032,8 @@ class TarefasPage(tk.Frame):
             uid = self._umap.get(fu)
             if uid:
                 tasks = [t for t in tasks
-                         if t.get("resp_id") == uid or t.get("autor_id") == uid]
+                         if uid in t.get("resp_ids", [t.get("resp_id","")])
+                         or t.get("autor_id") == uid]
 
         tasks.sort(key=lambda t: t.get("atualizado", ""), reverse=True)
         if not tasks:
@@ -1059,8 +1060,10 @@ class TarefasPage(tk.Frame):
 
         row2 = tk.Frame(body, bg=C["white"]); row2.pack(fill="x", pady=(2,0))
         lbl(row2, task["status"], fg=cor, font=F_SMALL, bg=C["white"]).pack(side="left")
-        if resp:
-            lbl(row2, f"  •  {resp.get('nome','?')}", fg=C["text2"],
+        resp_ids_c = task.get("resp_ids", [task.get("resp_id","")])
+        resp_nomes_c = [users[r]["nome"] for r in resp_ids_c if r in users]
+        if resp_nomes_c:
+            lbl(row2, f"  •  {', '.join(resp_nomes_c)}", fg=C["text2"],
                 font=F_SMALL, bg=C["white"]).pack(side="left")
         prazo = task.get("prazo","")
         if prazo:
@@ -1127,7 +1130,9 @@ class TarefasPage(tk.Frame):
 
         # infos
         pasta = task.get("pasta","—")
-        resp  = users.get(task.get("resp_id",""), {})
+        resp_ids_d = task.get("resp_ids", [task.get("resp_id","")])
+        resp_nomes_d = [users[r]["nome"] for r in resp_ids_d if r in users]
+        resp = {}  # compat
 
         def info(label, valor):
             r = tk.Frame(inner, bg=C["white"]); r.pack(fill="x", padx=20, pady=1)
@@ -1138,7 +1143,7 @@ class TarefasPage(tk.Frame):
 
         info("Pasta",       pasta)
         info("Disciplina",  task.get("disciplina","—"))
-        info("Responsável", resp.get("nome","—"))
+        info("Responsável", ", ".join(resp_nomes_d) if resp_nomes_d else "—")
         prazo_raw = task.get("prazo","")
         try:
             pp = prazo_raw.split("-")
@@ -1493,14 +1498,28 @@ class NovaTarefaDlg(tk.Toplevel):
         self.cb_disc.pack(fill="x")
         # Editável: usuário pode digitar disciplina personalizada
 
-        # responsável
-        tk.Label(f, text="Responsável", bg=C["white"], fg=C["text2"],
+        # responsável — multi-seleção
+        tk.Label(f, text="Responsável(eis)", bg=C["white"], fg=C["text2"],
                  font=F_SMALL).pack(anchor="w", pady=(10,2))
         us = self.ds.users()
         self._us = us
-        nomes = [f"{u['nome']} <{u['email']}>" for u in us]
-        self.v_resp = tk.StringVar()
-        ttk.Combobox(f, textvariable=self.v_resp, values=nomes, width=46).pack(fill="x")
+        fr_resp = tk.Frame(f, bg=C["white"],
+                           highlightthickness=1, highlightbackground=C["border"])
+        fr_resp.pack(fill="x")
+        sb_resp = ttk.Scrollbar(fr_resp, orient="vertical")
+        self.lb_resp = tk.Listbox(fr_resp, selectmode="multiple",
+                                  height=4, bg=C["white"], fg=C["text"],
+                                  font=F_SMALL, relief="flat",
+                                  selectbackground=C["primary"],
+                                  selectforeground="#ffffff",
+                                  yscrollcommand=sb_resp.set)
+        sb_resp.config(command=self.lb_resp.yview)
+        sb_resp.pack(side="right", fill="y")
+        self.lb_resp.pack(side="left", fill="both", expand=True)
+        for u in us:
+            self.lb_resp.insert("end", f"  {u['nome']}")
+        tk.Label(f, text="Ctrl+clique para múltiplos",
+                 bg=C["white"], fg=C["text2"], font=("Segoe UI",8)).pack(anchor="w")
 
         # prazo
         tk.Label(f, text="Prazo (AAAA-MM-DD)", bg=C["white"], fg=C["text2"],
@@ -1545,13 +1564,16 @@ class NovaTarefaDlg(tk.Toplevel):
         pasta  = self.v_pasta.get().strip()
         if not titulo or not pasta:
             self.v_err.set("Título e pasta são obrigatórios."); return
-        resp_id = None
-        for u in self._us:
-            if u["email"] in self.v_resp.get():
-                resp_id = u["id"]; break
+        selecionados = self.lb_resp.curselection()
+        resp_ids = [self._us[i]["id"] for i in selecionados]
+        # Converte prazo DD/MM/AAAA → AAAA-MM-DD
+        prazo_raw = self.v_prazo.get().strip()
+        try:
+            pp = prazo_raw.split("/")
+            prazo_iso = f"{pp[2]}-{pp[1]}-{pp[0]}" if len(pp)==3 else prazo_raw
+        except: prazo_iso = prazo_raw
         self.ds.criar_task(titulo, pasta, self.v_disc.get(),
-                           resp_id, self.v_prazo.get().strip(),
-                           self.user["id"])
+                           resp_ids, prazo_iso, self.user["id"])
         if self.callback: self.callback()
         self.destroy()
 
@@ -1703,7 +1725,7 @@ class App(tk.Tk):
 
             for t in tasks:
                 # Só tarefas onde o usuário é autor ou responsável
-                if t.get("autor_id") != uid and t.get("resp_id") != uid:
+                if t.get("autor_id") != uid and uid not in t.get("resp_ids", [t.get("resp_id","")]):
                     continue
                 nao_lidas = [m for m in t.get("msgs", [])
                              if m["autor_id"] != uid]
