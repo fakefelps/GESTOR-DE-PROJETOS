@@ -1498,28 +1498,24 @@ class NovaTarefaDlg(tk.Toplevel):
         self.cb_disc.pack(fill="x")
         # Editável: usuário pode digitar disciplina personalizada
 
-        # responsável — multi-seleção
+        # responsável — checkboxes
         tk.Label(f, text="Responsável(eis)", bg=C["white"], fg=C["text2"],
                  font=F_SMALL).pack(anchor="w", pady=(10,2))
         us = self.ds.users()
         self._us = us
+        self._resp_vars = []
         fr_resp = tk.Frame(f, bg=C["white"],
-                           highlightthickness=1, highlightbackground=C["border"])
+                           highlightthickness=1, highlightbackground=C["border"],
+                           pady=4, padx=8)
         fr_resp.pack(fill="x")
-        sb_resp = ttk.Scrollbar(fr_resp, orient="vertical")
-        self.lb_resp = tk.Listbox(fr_resp, selectmode="multiple",
-                                  height=4, bg=C["white"], fg=C["text"],
-                                  font=F_SMALL, relief="flat",
-                                  selectbackground=C["primary"],
-                                  selectforeground="#ffffff",
-                                  yscrollcommand=sb_resp.set)
-        sb_resp.config(command=self.lb_resp.yview)
-        sb_resp.pack(side="right", fill="y")
-        self.lb_resp.pack(side="left", fill="both", expand=True)
         for u in us:
-            self.lb_resp.insert("end", f"  {u['nome']}")
-        tk.Label(f, text="Ctrl+clique para múltiplos",
-                 bg=C["white"], fg=C["text2"], font=("Segoe UI",8)).pack(anchor="w")
+            var = tk.BooleanVar(value=False)
+            self._resp_vars.append(var)
+            tk.Checkbutton(fr_resp, text=u["nome"], variable=var,
+                           bg=C["white"], fg=C["text"], font=F_SMALL,
+                           selectcolor=C["surface"],
+                           activebackground=C["white"],
+                           cursor="hand2").pack(anchor="w")
 
         # prazo
         tk.Label(f, text="Prazo (AAAA-MM-DD)", bg=C["white"], fg=C["text2"],
@@ -1564,8 +1560,7 @@ class NovaTarefaDlg(tk.Toplevel):
         pasta  = self.v_pasta.get().strip()
         if not titulo or not pasta:
             self.v_err.set("Título e pasta são obrigatórios."); return
-        selecionados = self.lb_resp.curselection()
-        resp_ids = [self._us[i]["id"] for i in selecionados]
+        resp_ids = [self._us[i]["id"] for i, v in enumerate(self._resp_vars) if v.get()]
         # Converte prazo DD/MM/AAAA → AAAA-MM-DD
         prazo_raw = self.v_prazo.get().strip()
         try:
