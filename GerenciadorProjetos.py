@@ -1129,8 +1129,39 @@ class TarefasPage(tk.Frame):
         info("Pasta",       pasta)
         info("Disciplina",  task.get("disciplina","—"))
         info("Responsável", resp.get("nome","—"))
-        prazo = task.get("prazo","—")
-        info("Prazo",       prazo[:10] if len(prazo) >= 10 else prazo)
+        prazo_raw = task.get("prazo","")
+        try:
+            pp = prazo_raw.split("-")
+            prazo_fmt = f"{pp[2]}/{pp[1]}/{pp[0]}" if len(pp)==3 else prazo_raw
+        except: prazo_fmt = prazo_raw
+        r_prazo = tk.Frame(inner, bg=C["white"]); r_prazo.pack(fill="x", padx=20, pady=1)
+        lbl(r_prazo, "Prazo:", fg=C["text2"], font=F_SMALL, bg=C["white"],
+            width=12, anchor="w").pack(side="left")
+        v_prazo_edit = tk.StringVar(value=prazo_fmt)
+        e_p = entry(r_prazo, var=v_prazo_edit, w=12, bg=C["white"])
+        e_p.pack(side="left")
+        def _fmt_p(*_):
+            v = v_prazo_edit.get().replace("/","").replace("-","")
+            v = "".join(c for c in v if c.isdigit())[:8]
+            fmt = ""
+            for i, c in enumerate(v):
+                fmt += c
+                if i in (1,3): fmt += "/"
+            if fmt != v_prazo_edit.get():
+                v_prazo_edit.set(fmt); e_p.icursor(len(fmt))
+        v_prazo_edit.trace_add("write", _fmt_p)
+        def _salvar_prazo():
+            pv = v_prazo_edit.get().strip()
+            try:
+                pp2 = pv.split("/")
+                iso = f"{pp2[2]}-{pp2[1]}-{pp2[0]}" if len(pp2)==3 else pv
+            except: iso = pv
+            self.ds.update_task(task["id"], prazo=iso)
+            self._carregar()
+            lbl_ok.configure(text="✓ Prazo salvo")
+            self.after(2000, lambda: lbl_ok.configure(text=""))
+        btn(r_prazo, "✓", _salvar_prazo, bg=C["surface"], fg=C["ok"],
+            font=F_SMALL, pad=(6,2)).pack(side="left", padx=(4,0))
         info("Criado em",   task.get("criado","")[:16].replace("T"," "))
 
         # botões ação
@@ -1448,8 +1479,9 @@ class NovaTarefaDlg(tk.Toplevel):
                  font=F_SMALL).pack(anchor="w", pady=(10,2))
         self.v_disc = tk.StringVar()
         self.cb_disc = ttk.Combobox(f, textvariable=self.v_disc,
-                                    values=DISC_PADRAO + ["OUTRO"], width=46)
+                                    values=DISC_PADRAO, width=46)
         self.cb_disc.pack(fill="x")
+        # Editável: usuário pode digitar disciplina personalizada
 
         # responsável
         tk.Label(f, text="Responsável", bg=C["white"], fg=C["text2"],
@@ -1488,7 +1520,7 @@ class NovaTarefaDlg(tk.Toplevel):
     def _update_discs(self):
         p = Path(self.v_pasta.get())
         discs = [d.name for d in sorted(p.iterdir()) if d.is_dir()] if p.exists() else []
-        self.cb_disc["values"] = (discs + ["OUTRO"]) if discs else (DISC_PADRAO + ["OUTRO"])
+        self.cb_disc["values"] = discs if discs else DISC_PADRAO
 
     def _preencher_pasta(self, pasta_str):
         self.v_pasta.set(pasta_str)
