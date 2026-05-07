@@ -640,7 +640,8 @@ class ExploradorPage(tk.Frame):
 # ══════════════════════════════════════════════════════════════════════════════
 class AnotadorPDF(tk.Toplevel):
     TOOLS = ["Retângulo", "Seta", "Texto", "Caneta"]
-    CORES = ["#e74c3c","#e67e22","#f1c40f","#2ecc71","#3498db","#9b59b6"]
+    CORES = ["#000000","#e74c3c","#e67e22","#f1c40f","#2ecc71",
+              "#3498db","#9b59b6","#ffffff","#7f8c8d","#1a2533"]
 
     def __init__(self, master, pdf_path: Path, ds: DataStore,
                  task_id: str, autor_id: str, reload_cb=None):
@@ -701,6 +702,14 @@ class AnotadorPDF(tk.Toplevel):
         for cor in self.CORES:
             tk.Button(tb, bg=cor, width=2, relief="flat", cursor="hand2",
                       command=lambda c=cor: self.v_cor.set(c)).pack(side="left", padx=2)
+
+        def _cor_custom():
+            from tkinter.colorchooser import askcolor
+            cor = askcolor(color=self.v_cor.get(), title="Escolher cor")[1]
+            if cor: self.v_cor.set(cor)
+        tk.Button(tb, text="⊕", bg=C["surface"], fg=C["primary"],
+                  font=("Segoe UI",11,"bold"), relief="flat", cursor="hand2",
+                  command=_cor_custom, padx=4).pack(side="left", padx=(4,0))
 
         tk.Label(tb, text="  Esp:", bg=C["surface"], fg=C["text2"],
                  font=F_SMALL).pack(side="left", padx=(8,0))
@@ -1575,28 +1584,14 @@ class App(tk.Tk):
         CFG_LOCAL.write_text(json.dumps(self._cfg, ensure_ascii=False, indent=2),
                              encoding="utf-8")
 
-    def _init(self):
-        pasta = self._cfg.get("pasta_raiz") or PASTA_RAIZ_DEFAULT
-        if not Path(pasta).exists():
-            # Tenta encontrar automaticamente em qualquer OneDrive do PC
-            pasta = self._buscar_pasta_projeto()
-        if not pasta or not Path(pasta).exists():
-            pasta = filedialog.askdirectory(
-                title="Selecione a pasta PROJETO no OneDrive",
-                initialdir=str(Path.home()))
-            if not pasta: self.destroy(); return
-        self._cfg["pasta_raiz"] = pasta; self._save_cfg()
-
     def _buscar_pasta_projeto(self):
         """Busca automaticamente a pasta PROJETO em qualquer OneDrive do PC."""
         home = Path.home()
-        # Candidatos comuns de pasta OneDrive
         candidatos = [
             home / "OneDrive" / "MORAIS ENGENHARIA" / "PROJETO",
             home / "OneDrive - Pessoal" / "MORAIS ENGENHARIA" / "PROJETO",
             home / "OneDrive - Morais Engenharia" / "MORAIS ENGENHARIA" / "PROJETO",
         ]
-        # Busca também em subpastas do home chamadas OneDrive*
         for item in home.iterdir():
             if item.is_dir() and "onedrive" in item.name.lower():
                 candidatos.append(item / "MORAIS ENGENHARIA" / "PROJETO")
@@ -1605,9 +1600,20 @@ class App(tk.Tk):
                 return str(c)
         return None
 
+    def _init(self):
+        pasta = self._cfg.get("pasta_raiz") or PASTA_RAIZ_DEFAULT
+        if not Path(pasta).exists():
+            pasta = self._buscar_pasta_projeto()
+        if not pasta or not Path(pasta).exists():
+            pasta = filedialog.askdirectory(
+                title="Selecione a pasta PROJETO no OneDrive",
+                initialdir=str(Path.home()))
+            if not pasta: self.destroy(); return
+        self._cfg["pasta_raiz"] = pasta
+        self._save_cfg()
+
         self.ds = DataStore(pasta)
 
-        # auto-login
         em  = self._cfg.get("lembrar_email","")
         sh  = self._cfg.get("lembrar_hash","")
         auto = None
