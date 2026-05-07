@@ -365,7 +365,7 @@ class ExploradorPage(tk.Frame):
         pw = tk.PanedWindow(self, orient="horizontal", bg=C["border"],
                             sashwidth=4, sashrelief="flat")
         pw.pack(fill="both", expand=True)
-        left  = tk.Frame(pw, bg=C["bg"], width=320); pw.add(left, minsize=260)
+        left  = tk.Frame(pw, bg=C["bg"], width=420); pw.add(left, minsize=360)
         right = tk.Frame(pw, bg=C["white"]);          pw.add(right, minsize=400)
         self._build_left(left); self._build_right(right)
 
@@ -436,7 +436,7 @@ class ExploradorPage(tk.Frame):
                 self.tree.insert(c, "end", text="__ph__", values=["__ph__"])
             else:
                 ext = it.suffix.lower()
-                ic  = {"pdf":"📕","rvt":"🏗","dwg":"📐","xlsx":"📊","xls":"📊","docx":"📝","doc":"📝","png":"🖼","jpg":"🖼","jpeg":"🖼"}.get(ext.lstrip("."), "📄")
+                ic  = {"pdf":"📕 PDF","rvt":"🏗 RVT","dwg":"📐 DWG","xlsx":"📊 XLS","xls":"📊 XLS","docx":"📝 DOC","doc":"📝 DOC","png":"🖼 PNG","jpg":"🖼 JPG","jpeg":"🖼 JPG"}.get(ext.lstrip("."), "📄 " + ext.lstrip(".").upper() if ext else "📄")
                 tg  = "pdf" if ext == ".pdf" else "arquivo"
                 self.tree.insert(iid, "end", text=f"{ic}  {it.name}",
                                  values=[str(it)], tags=[tg])
@@ -512,11 +512,11 @@ class ExploradorPage(tk.Frame):
                             lbl_txt = f"📁  {parte.name}  ({parte.parent.name})"
                         iid = self.tree.insert(par_iid, "end", text=lbl_txt,
                                                values=[k], tags=["pasta"])
-                        if parte == path:
+                        if parte == path and termo in parte.name.lower():
                             self._fill_children_busca(iid, parte)
                     else:
                         ext = parte.suffix.lower()
-                        ic  = {"pdf":"📕","rvt":"🏗","dwg":"📐","xlsx":"📊","xls":"📊","docx":"📝","doc":"📝","png":"🖼","jpg":"🖼","jpeg":"🖼"}.get(ext.lstrip("."), "📄")
+                        ic  = {"pdf":"📕 PDF","rvt":"🏗 RVT","dwg":"📐 DWG","xlsx":"📊 XLS","xls":"📊 XLS","docx":"📝 DOC","doc":"📝 DOC","png":"🖼 PNG","jpg":"🖼 JPG","jpeg":"🖼 JPG"}.get(ext.lstrip("."), "📄 " + ext.lstrip(".").upper() if ext else "📄")
                         tg  = "pdf" if ext == ".pdf" else "arquivo"
                         iid = self.tree.insert(par_iid, "end",
                                                text=f"{ic}  {parte.name}",
@@ -534,7 +534,7 @@ class ExploradorPage(tk.Frame):
                     self._fill_children_busca(c, it)
                 else:
                     ext = it.suffix.lower()
-                    ic = {"pdf":"📕","rvt":"🏗","dwg":"📐","xlsx":"📊","xls":"📊","docx":"📝","doc":"📝","png":"🖼","jpg":"🖼","jpeg":"🖼"}.get(ext.lstrip("."), "📄")
+                    ic = {"pdf":"📕 PDF","rvt":"🏗 RVT","dwg":"📐 DWG","xlsx":"📊 XLS","xls":"📊 XLS","docx":"📝 DOC","doc":"📝 DOC","png":"🖼 PNG","jpg":"🖼 JPG","jpeg":"🖼 JPG"}.get(ext.lstrip("."), "📄 " + ext.lstrip(".").upper() if ext else "📄")
                     tg = "pdf" if ext == ".pdf" else "arquivo"
                     self.tree.insert(iid, "end", text=f"{ic}  {it.name}",
                                      values=[str(it)], tags=[tg])
@@ -952,7 +952,7 @@ class TarefasPage(tk.Frame):
         pw = tk.PanedWindow(self, orient="horizontal", bg=C["border"],
                             sashwidth=4, sashrelief="flat")
         pw.pack(fill="both", expand=True)
-        left  = tk.Frame(pw, bg=C["bg"], width=320); pw.add(left, minsize=280)
+        left  = tk.Frame(pw, bg=C["bg"], width=420); pw.add(left, minsize=360)
         right = tk.Frame(pw, bg=C["white"]);          pw.add(right, minsize=400)
         self._build_left(left)
         self.detalhe = right
@@ -1555,6 +1555,13 @@ class App(tk.Tk):
         setup_style()
         self.title("Gerenciador de Projetos — Morais Engenharia")
         self.configure(bg=C["bg"]); self.geometry("1300x820"); self.minsize(900,600)
+        try:
+            import os
+            ico = os.path.join(os.path.dirname(os.path.abspath(__file__)), "icone.ico")
+            if os.path.exists(ico):
+                self.iconbitmap(ico)
+        except Exception:
+            pass
         self.user = None; self.ds = None
         self._cfg = self._read_cfg()
         self.withdraw()
@@ -1571,11 +1578,32 @@ class App(tk.Tk):
     def _init(self):
         pasta = self._cfg.get("pasta_raiz") or PASTA_RAIZ_DEFAULT
         if not Path(pasta).exists():
+            # Tenta encontrar automaticamente em qualquer OneDrive do PC
+            pasta = self._buscar_pasta_projeto()
+        if not pasta or not Path(pasta).exists():
             pasta = filedialog.askdirectory(
                 title="Selecione a pasta PROJETO no OneDrive",
                 initialdir=str(Path.home()))
             if not pasta: self.destroy(); return
-            self._cfg["pasta_raiz"] = pasta; self._save_cfg()
+        self._cfg["pasta_raiz"] = pasta; self._save_cfg()
+
+    def _buscar_pasta_projeto(self):
+        """Busca automaticamente a pasta PROJETO em qualquer OneDrive do PC."""
+        home = Path.home()
+        # Candidatos comuns de pasta OneDrive
+        candidatos = [
+            home / "OneDrive" / "MORAIS ENGENHARIA" / "PROJETO",
+            home / "OneDrive - Pessoal" / "MORAIS ENGENHARIA" / "PROJETO",
+            home / "OneDrive - Morais Engenharia" / "MORAIS ENGENHARIA" / "PROJETO",
+        ]
+        # Busca também em subpastas do home chamadas OneDrive*
+        for item in home.iterdir():
+            if item.is_dir() and "onedrive" in item.name.lower():
+                candidatos.append(item / "MORAIS ENGENHARIA" / "PROJETO")
+        for c in candidatos:
+            if c.exists():
+                return str(c)
+        return None
 
         self.ds = DataStore(pasta)
 

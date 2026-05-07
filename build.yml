@@ -1,0 +1,26 @@
+name: Gerar EXE - Gerenciador de Projetos
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Instalar dependencias
+        run: pip install pymupdf pillow==10.4.0 plyer pyinstaller
+      - name: Gerar EXE
+        run: |
+          python -m PyInstaller --onefile --windowed --name "GerenciadorProjetos" --icon "icone.ico" --hidden-import PIL._imaging --hidden-import PIL.Image --hidden-import PIL.ImageTk --hidden-import PIL.ImageDraw --hidden-import PIL.ImageGrab --hidden-import plyer.platforms.win.notification GerenciadorProjetos.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: GerenciadorProjetos-Windows
+          path: dist/GerenciadorProjetos.exe
+          retention-days: 30
