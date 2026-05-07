@@ -436,7 +436,7 @@ class ExploradorPage(tk.Frame):
                 self.tree.insert(c, "end", text="__ph__", values=["__ph__"])
             else:
                 ext = it.suffix.lower()
-                ic  = {"pdf":"📕 PDF","rvt":"🏗 RVT","dwg":"📐 DWG","xlsx":"📊 XLS","xls":"📊 XLS","docx":"📝 DOC","doc":"📝 DOC","png":"🖼 PNG","jpg":"🖼 JPG","jpeg":"🖼 JPG"}.get(ext.lstrip("."), "📄 " + ext.lstrip(".").upper() if ext else "📄")
+                ic  = {"pdf":"📕 PDF","rvt":"🏗 RVT","dwg":"📐 DWG","xlsx":"📊 XLS","xls":"📊 XLS","docx":"📝 DOC","doc":"📝 DOC","png":"🖼 PNG","jpg":"🖼 JPG","jpeg":"🖼 JPG","dwf":"📄 DWF","ifc":"📄 IFC","skp":"📄 SKP","mp4":"🎥 MP4","zip":"📦 ZIP"}.get(ext.lstrip("."), "📄")
                 tg  = "pdf" if ext == ".pdf" else "arquivo"
                 self.tree.insert(iid, "end", text=f"{ic}  {it.name}",
                                  values=[str(it)], tags=[tg])
@@ -516,7 +516,7 @@ class ExploradorPage(tk.Frame):
                             self._fill_children_busca(iid, parte)
                     else:
                         ext = parte.suffix.lower()
-                        ic  = {"pdf":"📕 PDF","rvt":"🏗 RVT","dwg":"📐 DWG","xlsx":"📊 XLS","xls":"📊 XLS","docx":"📝 DOC","doc":"📝 DOC","png":"🖼 PNG","jpg":"🖼 JPG","jpeg":"🖼 JPG"}.get(ext.lstrip("."), "📄 " + ext.lstrip(".").upper() if ext else "📄")
+                        ic  = {"pdf":"📕 PDF","rvt":"🏗 RVT","dwg":"📐 DWG","xlsx":"📊 XLS","xls":"📊 XLS","docx":"📝 DOC","doc":"📝 DOC","png":"🖼 PNG","jpg":"🖼 JPG","jpeg":"🖼 JPG","dwf":"📄 DWF","ifc":"📄 IFC","skp":"📄 SKP","mp4":"🎥 MP4","zip":"📦 ZIP"}.get(ext.lstrip("."), "📄")
                         tg  = "pdf" if ext == ".pdf" else "arquivo"
                         iid = self.tree.insert(par_iid, "end",
                                                text=f"{ic}  {parte.name}",
@@ -534,7 +534,7 @@ class ExploradorPage(tk.Frame):
                     self._fill_children_busca(c, it)
                 else:
                     ext = it.suffix.lower()
-                    ic = {"pdf":"📕 PDF","rvt":"🏗 RVT","dwg":"📐 DWG","xlsx":"📊 XLS","xls":"📊 XLS","docx":"📝 DOC","doc":"📝 DOC","png":"🖼 PNG","jpg":"🖼 JPG","jpeg":"🖼 JPG"}.get(ext.lstrip("."), "📄 " + ext.lstrip(".").upper() if ext else "📄")
+                    ic = {"pdf":"📕 PDF","rvt":"🏗 RVT","dwg":"📐 DWG","xlsx":"📊 XLS","xls":"📊 XLS","docx":"📝 DOC","doc":"📝 DOC","png":"🖼 PNG","jpg":"🖼 JPG","jpeg":"🖼 JPG","dwf":"📄 DWF","ifc":"📄 IFC","skp":"📄 SKP","mp4":"🎥 MP4","zip":"📦 ZIP"}.get(ext.lstrip("."), "📄")
                     tg = "pdf" if ext == ".pdf" else "arquivo"
                     self.tree.insert(iid, "end", text=f"{ic}  {it.name}",
                                      values=[str(it)], tags=[tg])
