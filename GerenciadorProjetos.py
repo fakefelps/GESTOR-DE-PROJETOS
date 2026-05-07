@@ -376,7 +376,12 @@ class ExploradorPage(tk.Frame):
         bar.pack(fill="x")
         tk.Label(bar, text="🔍", bg=C["white"], fg=C["text2"]).pack(side="left")
         self.v_busca = tk.StringVar()
-        self.v_busca.trace_add("write", lambda *_: self._filtrar())
+        self._busca_after = None
+        def _agendar_filtro(*_):
+            if self._busca_after:
+                self.after_cancel(self._busca_after)
+            self._busca_after = self.after(400, self._filtrar)
+        self.v_busca.trace_add("write", _agendar_filtro)
         entry(bar, var=self.v_busca, w=22, bg=C["white"]).pack(
             side="left", fill="x", expand=True, padx=(6,0))
 
