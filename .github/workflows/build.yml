@@ -18,7 +18,7 @@ jobs:
         run: pip install pymupdf pillow==10.4.0 plyer pyinstaller
       - name: Gerar EXE
         run: |
-          python -m PyInstaller --onefile --windowed --name "GerenciadorProjetos" --hidden-import PIL._imaging --hidden-import PIL.Image --hidden-import PIL.ImageTk --hidden-import PIL.ImageDraw --hidden-import PIL.ImageGrab --hidden-import plyer.platforms.win.notification GerenciadorProjetos.py
+          python -m PyInstaller --onefile --windowed --name "GerenciadorProjetos" --icon "icone.ico" --hidden-import PIL._imaging --hidden-import PIL.Image --hidden-import PIL.ImageTk --hidden-import PIL.ImageDraw --hidden-import PIL.ImageGrab --hidden-import plyer.platforms.win.notification GerenciadorProjetos.py
       - uses: actions/upload-artifact@v4
         with:
           name: GerenciadorProjetos-Windows
