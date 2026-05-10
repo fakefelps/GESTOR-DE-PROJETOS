@@ -600,8 +600,7 @@ class ExploradorPage(tk.Frame):
                         if parte.parent.parent == self.ds.raiz:
                             lbl_txt = f"📁  {parte.name}  ({parte.parent.name})"
                         iid = self.tree.insert(par_iid, "end", text=lbl_txt,
-                                               values=[k], tags=["pasta"],
-                                               open=True)
+                                               values=[k], tags=["pasta"])
                     else:
                         ext = parte.suffix.lower()
                         ic  = {"pdf":"📕 PDF","rvt":"🏗 RVT","dwg":"📐 DWG","xlsx":"📊 XLS","xls":"📊 XLS","docx":"📝 DOC","doc":"📝 DOC","png":"🖼 PNG","jpg":"🖼 JPG","jpeg":"🖼 JPG","dwf":"📄 DWF","ifc":"📄 IFC","skp":"📄 SKP","mp4":"🎥 MP4","zip":"📦 ZIP"}.get(ext.lstrip("."), "📄")
@@ -1659,10 +1658,23 @@ class NovaTarefaDlg(tk.Toplevel):
                            cursor="hand2").pack(anchor="w")
 
         # prazo
-        tk.Label(f, text="Prazo (AAAA-MM-DD)", bg=C["white"], fg=C["text2"],
+        tk.Label(f, text="Prazo (DD/MM/AAAA)", bg=C["white"], fg=C["text2"],
                  font=F_SMALL).pack(anchor="w", pady=(10,2))
         self.v_prazo = tk.StringVar()
-        entry(f, var=self.v_prazo, w=20, bg=C["white"]).pack(anchor="w")
+        e_prazo = entry(f, var=self.v_prazo, w=20, bg=C["white"])
+        e_prazo.pack(anchor="w")
+        # Máscara automática: insere "/" enquanto digita (DD/MM/AAAA)
+        def _fmt_prazo(*_):
+            v = self.v_prazo.get().replace("/","").replace("-","")
+            v = "".join(c for c in v if c.isdigit())[:8]
+            fmt = ""
+            for i, c in enumerate(v):
+                fmt += c
+                if i in (1, 3): fmt += "/"
+            if fmt != self.v_prazo.get():
+                self.v_prazo.set(fmt)
+                e_prazo.icursor(len(fmt))
+        self.v_prazo.trace_add("write", _fmt_prazo)
 
         self.v_err = tk.StringVar()
         tk.Label(f, textvariable=self.v_err, bg=C["white"],
