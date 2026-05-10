@@ -164,11 +164,52 @@ class DataStore:
         self.save_tasks(ts)
 
     def salvar_img(self, pil_img):
-        """Salva imagem PIL em chat_imgs e retorna o path string."""
+        """Salva imagem PIL em chat_imgs e retorna path RELATIVO à raiz.
+        Salvar relativo permite que outros PCs (com OneDrive em outro caminho)
+        consigam encontrar o arquivo."""
         ts = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
         dest = self._fi / f"img_{ts}.png"
         pil_img.save(str(dest), "PNG")
-        return str(dest)
+        # Retorna caminho relativo à raiz, com '/' (multiplataforma)
+        rel = dest.relative_to(self.raiz).as_posix()
+        return rel
+
+    def resolver_anexo(self, anx):
+        """Recebe um caminho de anexo (relativo OU absoluto antigo) e
+        devolve um Path absoluto que aponta para o arquivo neste PC.
+        Lida com paths legados absolutos (de outro usuário/OneDrive)."""
+        if not anx:
+            return None
+        s = str(anx).replace("\\", "/")
+        # 1) Caminho relativo a partir da raiz (formato novo)
+        candidato = (self.raiz / s).resolve()
+        if candidato.exists():
+            return candidato
+        # 2) Caminho absoluto literal (formato antigo do mesmo PC)
+        try:
+            p = Path(anx)
+            if p.is_absolute() and p.exists():
+                return p
+        except Exception:
+            pass
+        # 3) Path antigo absoluto de OUTRO PC: extrai trecho após
+        #    ".app_data/chat_imgs/" e procura na raiz local.
+        marcador = ".app_data/chat_imgs/"
+        idx = s.find(marcador)
+        if idx >= 0:
+            relativo = s[idx:]
+            cand2 = (self.raiz / relativo).resolve()
+            if cand2.exists():
+                return cand2
+        # 4) Procura por nome em chat_imgs local
+        try:
+            nome = Path(s).name
+            cand3 = self._fi / nome
+            if cand3.exists():
+                return cand3
+        except Exception:
+            pass
+        return None
 
     def msgs_novas(self, uid, janela_seg=300):
         agora = datetime.now()
@@ -406,6 +447,8 @@ class ExploradorPage(tk.Frame):
         self.tree.bind("<<TreeviewOpen>>",  self._on_expand)
         self.tree.bind("<Double-Button-1>", self._on_dbl)
         self.tree.bind("<Button-3>",        self._on_rclick)
+        # Single-click no nome de uma pasta também expande/colapsa
+        self.tree.bind("<Button-1>",        self._on_single_click)
 
     def _carregar_arvore(self):
         self.tree.delete(*self.tree.get_children())
@@ -441,6 +484,39 @@ class ExploradorPage(tk.Frame):
                 self.tree.insert(iid, "end", text=f"{ic}  {it.name}",
                                  values=[str(it)], tags=[tg])
 
+    def _on_single_click(self, event):
+        """Single-click no NOME de uma pasta expande/colapsa.
+        No clique sobre a seta (►/▼) ou em arquivos, deixa o comportamento padrão."""
+        region = self.tree.identify("region", event.x, event.y)
+        # 'tree' = ícone+texto da linha (queremos agir aqui)
+        # outras regiões (cell, heading, separator) deixam passar
+        if region != "tree":
+            return
+        # Se o clique foi exatamente sobre o indicador de expansão, não
+        # interferimos — o Tk já cuida disso.
+        elem = self.tree.identify_element(event.x, event.y)
+        if "indicator" in str(elem).lower():
+            return
+        iid = self.tree.identify_row(event.y)
+        if not iid: return
+        vals = self.tree.item(iid, "values")
+        if not vals or vals[0] == "__ph__": return
+        try:
+            p = Path(vals[0])
+        except Exception:
+            return
+        if not p.is_dir(): return
+        # Toggle: se já estava aberta, fecha; senão, abre e dispara expand
+        if self.tree.item(iid, "open"):
+            self.tree.item(iid, open=False)
+        else:
+            self.tree.item(iid, open=True)
+            # Substitui placeholder, se houver
+            ch = self.tree.get_children(iid)
+            if len(ch) == 1 and self.tree.item(ch[0], "values")[0] == "__ph__":
+                self.tree.delete(ch[0])
+                self._fill_children(iid, p)
+
     def _on_dbl(self, event):
         iid = self.tree.focus()
         if not iid: return
@@ -473,6 +549,12 @@ class ExploradorPage(tk.Frame):
             m.add_separator()
             m.add_command(label="✅ Criar tarefa aqui",
                           command=lambda: self._criar_tarefa_aqui(p))
+        else:
+            m.add_command(label="Abrir pasta no Explorer",
+                          command=lambda: subprocess.Popen(["explorer", str(p.parent)]))
+            m.add_separator()
+            m.add_command(label="✅ Criar tarefa nesta pasta",
+                          command=lambda: self._criar_tarefa_aqui(p.parent))
         m.post(event.x_root, event.y_root)
 
     def _criar_tarefa_aqui(self, path):
@@ -495,9 +577,16 @@ class ExploradorPage(tk.Frame):
             self._carregar_arvore(); return
         self.tree.delete(*self.tree.get_children())
         iid_map = {}
-        for path in sorted(self.ds.raiz.rglob("*")):
-            if APP_DATA in path.parts: continue
-            if termo not in path.name.lower(): continue
+        # Coleta todos os itens cujo NOME bate o termo
+        try:
+            matches = [p for p in self.ds.raiz.rglob("*")
+                       if APP_DATA not in p.parts and termo in p.name.lower()]
+        except Exception:
+            matches = []
+        matches.sort()
+        for path in matches:
+            # Constrói o caminho da raiz até o item, criando ancestrais (sem
+            # preencher os filhos não-relacionados) — só os ancestrais.
             partes = []
             p = path
             while p != self.ds.raiz:
@@ -511,9 +600,8 @@ class ExploradorPage(tk.Frame):
                         if parte.parent.parent == self.ds.raiz:
                             lbl_txt = f"📁  {parte.name}  ({parte.parent.name})"
                         iid = self.tree.insert(par_iid, "end", text=lbl_txt,
-                                               values=[k], tags=["pasta"])
-                        if parte == path and termo in parte.name.lower():
-                            self._fill_children_busca(iid, parte)
+                                               values=[k], tags=["pasta"],
+                                               open=True)
                     else:
                         ext = parte.suffix.lower()
                         ic  = {"pdf":"📕 PDF","rvt":"🏗 RVT","dwg":"📐 DWG","xlsx":"📊 XLS","xls":"📊 XLS","docx":"📝 DOC","doc":"📝 DOC","png":"🖼 PNG","jpg":"🖼 JPG","jpeg":"🖼 JPG","dwf":"📄 DWF","ifc":"📄 IFC","skp":"📄 SKP","mp4":"🎥 MP4","zip":"📦 ZIP"}.get(ext.lstrip("."), "📄")
@@ -781,11 +869,27 @@ class AnotadorPDF(tk.Toplevel):
             if an["page"] == self._page: self._draw_an(an)
 
     def _xy(self, ex, ey):
+        """Coords no canvas (em pixels do canvas, escaladas pelo zoom atual)."""
         return int(self.cv.canvasx(ex)), int(self.cv.canvasy(ey))
+
+    def _to_page(self, cx, cy):
+        """Converte coords do canvas (zoom atual) para coords da página PDF
+        (independentes do zoom). render_pdf_page usa matrix = zoom*1.5."""
+        f = self._zoom * 1.5
+        if f <= 0: f = 1.0
+        return cx / f, cy / f
+
+    def _to_canvas(self, px, py):
+        """Converte coords da página PDF para coords do canvas (zoom atual)."""
+        f = self._zoom * 1.5
+        return px * f, py * f
 
     def _rclick_canvas(self, e):
         """Botão direito: menu de exclusão em anotações próximas, ou pan."""
-        x, y = self._xy(e.x, e.y)
+        cx, cy = self._xy(e.x, e.y)
+        # Converte clique do canvas para coords de página (mesmo espaço das anotações)
+        x, y = self._to_page(cx, cy)
+        tol = 25 / (self._zoom * 1.5)  # tolerância no espaço da página
         hits = []
         for an in reversed(self._anotacoes):
             if an["page"] != self._page: continue
@@ -793,12 +897,12 @@ class AnotadorPDF(tk.Toplevel):
             hit = False
             if t in ("rect","seta"):
                 x0,y0,x1,y1 = an.get("x0",0),an.get("y0",0),an.get("x1",0),an.get("y1",0)
-                hit = (min(x0,x1)-25 <= x <= max(x0,x1)+25 and
-                       min(y0,y1)-25 <= y <= max(y0,y1)+25)
+                hit = (min(x0,x1)-tol <= x <= max(x0,x1)+tol and
+                       min(y0,y1)-tol <= y <= max(y0,y1)+tol)
             elif t == "texto":
-                hit = abs(x-an["x"]) < 100 and abs(y-an["y"]) < 40
+                hit = abs(x-an["x"]) < (100/(self._zoom*1.5)) and abs(y-an["y"]) < (40/(self._zoom*1.5))
             elif t == "caneta":
-                hit = any(abs(x-p[0]) < 25 and abs(y-p[1]) < 25 for p in an["pts"])
+                hit = any(abs(x-p[0]) < tol and abs(y-p[1]) < tol for p in an["pts"])
             if hit: hits.append(an)
 
         if hits:
@@ -830,7 +934,9 @@ class AnotadorPDF(tk.Toplevel):
     def _press(self, e):
         if self.v_tool.get() == "Selecionar":
             self.cv.scan_mark(e.x, e.y); return
-        x, y = self._xy(e.x, e.y)
+        cx, cy = self._xy(e.x, e.y)
+        # Armazena em coords da página (independente do zoom)
+        x, y = self._to_page(cx, cy)
         self._drag_start = (x, y)
         if self.v_tool.get() == "Caneta": self._caneta_pts = [(x, y)]
 
@@ -838,37 +944,49 @@ class AnotadorPDF(tk.Toplevel):
         if self.v_tool.get() == "Selecionar":
             self.cv.scan_dragto(e.x, e.y, gain=1); return
         if not self._drag_start: return
-        x, y = self._xy(e.x, e.y); x0, y0 = self._drag_start
+        cx, cy = self._xy(e.x, e.y)
+        x, y = self._to_page(cx, cy)
+        x0, y0 = self._drag_start
+        # Desenho temporário no canvas usa coords de canvas (zoom atual)
+        cx0, cy0 = self._to_canvas(x0, y0)
         cor = self.v_cor.get(); esp = self.v_esp.get()
         if self._temp: self.cv.delete(self._temp); self._temp = None
         t = self.v_tool.get()
         if t == "Retângulo":
-            self._temp = self.cv.create_rectangle(x0,y0,x,y, outline=cor, width=esp)
+            self._temp = self.cv.create_rectangle(cx0,cy0,cx,cy, outline=cor, width=esp)
         elif t == "Seta":
-            self._temp = self.cv.create_line(x0,y0,x,y, fill=cor, width=esp,
+            self._temp = self.cv.create_line(cx0,cy0,cx,cy, fill=cor, width=esp,
                                               arrow="last", arrowshape=(16,20,6))
         elif t == "Caneta":
             self._caneta_pts.append((x, y))
             if len(self._caneta_pts) >= 2:
-                pts = [c for p in self._caneta_pts for c in p]
-                self._temp = self.cv.create_line(*pts, fill=cor, width=esp, smooth=True)
+                # canvas pts a partir das coords de página
+                cpts = []
+                for px, py in self._caneta_pts:
+                    ccx, ccy = self._to_canvas(px, py)
+                    cpts.extend([ccx, ccy])
+                self._temp = self.cv.create_line(*cpts, fill=cor, width=esp, smooth=True)
 
     def _release(self, e):
         if self.v_tool.get() == "Selecionar": return
         if not self._drag_start: return
-        x, y = self._xy(e.x, e.y); x0, y0 = self._drag_start
+        cx, cy = self._xy(e.x, e.y)
+        x, y = self._to_page(cx, cy)
+        x0, y0 = self._drag_start
         cor = self.v_cor.get(); esp = self.v_esp.get()
         if self._temp: self.cv.delete(self._temp); self._temp = None
         t = self.v_tool.get()
         an = None
+        # tolerância mínima de 4 px no canvas → converte pra page space
+        min_d = 4 / (self._zoom * 1.5)
         if t == "Texto":
             txt = simpledialog.askstring("Texto", "Digite:", parent=self)
             if txt: an = {"type":"texto","page":self._page,"x":x0,"y":y0,
                           "text":txt,"cor":cor,"esp":esp}
-        elif t == "Retângulo" and (abs(x-x0)>4 or abs(y-y0)>4):
+        elif t == "Retângulo" and (abs(x-x0)>min_d or abs(y-y0)>min_d):
             an = {"type":"rect","page":self._page,"x0":x0,"y0":y0,"x1":x,"y1":y,
                   "cor":cor,"esp":esp}
-        elif t == "Seta" and (abs(x-x0)>4 or abs(y-y0)>4):
+        elif t == "Seta" and (abs(x-x0)>min_d or abs(y-y0)>min_d):
             an = {"type":"seta","page":self._page,"x0":x0,"y0":y0,"x1":x,"y1":y,
                   "cor":cor,"esp":esp}
         elif t == "Caneta" and len(self._caneta_pts) >= 2:
@@ -879,21 +997,29 @@ class AnotadorPDF(tk.Toplevel):
         self._drag_start = None; self._caneta_pts = []
 
     def _draw_an(self, an):
+        """Desenha anotação no canvas convertendo das coords de página para canvas."""
         cor = an["cor"]; esp = an["esp"]; t = an["type"]
         if t == "rect":
-            self.cv.create_rectangle(an["x0"],an["y0"],an["x1"],an["y1"],
-                                     outline=cor, width=esp)
+            cx0, cy0 = self._to_canvas(an["x0"], an["y0"])
+            cx1, cy1 = self._to_canvas(an["x1"], an["y1"])
+            self.cv.create_rectangle(cx0,cy0,cx1,cy1, outline=cor, width=esp)
         elif t == "seta":
-            self.cv.create_line(an["x0"],an["y0"],an["x1"],an["y1"],
-                                fill=cor, width=esp, arrow="last", arrowshape=(16,20,6))
+            cx0, cy0 = self._to_canvas(an["x0"], an["y0"])
+            cx1, cy1 = self._to_canvas(an["x1"], an["y1"])
+            self.cv.create_line(cx0,cy0,cx1,cy1, fill=cor, width=esp,
+                                arrow="last", arrowshape=(16,20,6))
         elif t == "texto":
-            self.cv.create_text(an["x"],an["y"], text=an["text"], fill=cor,
+            cx, cy = self._to_canvas(an["x"], an["y"])
+            self.cv.create_text(cx,cy, text=an["text"], fill=cor,
                                 font=("Segoe UI", int(12*self._zoom)), anchor="nw")
         elif t == "caneta":
             pts = an["pts"]
             if len(pts) >= 2:
-                self.cv.create_line(*[c for p in pts for c in p],
-                                    fill=cor, width=esp, smooth=True)
+                cpts = []
+                for px, py in pts:
+                    ccx, ccy = self._to_canvas(px, py)
+                    cpts.extend([ccx, ccy])
+                self.cv.create_line(*cpts, fill=cor, width=esp, smooth=True)
 
     def _desfazer(self):
         page_ans = [a for a in self._anotacoes if a["page"] == self._page]
@@ -919,27 +1045,38 @@ class AnotadorPDF(tk.Toplevel):
             return
         img  = self._base_img.copy()
         draw = ImageDraw.Draw(img)
+        # As coords das anotações estão em "page space"; a imagem renderizada
+        # foi feita com matrix = zoom*1.5, então multiplicamos para obter
+        # coords em pixels da imagem.
+        f = self._zoom * 1.5
+        def _S(v):  # scala scalar
+            return int(v * f)
         for an in [a for a in self._anotacoes if a["page"] == self._page]:
             cor = an["cor"]; esp = an["esp"]; t = an["type"]
             if t == "rect":
+                x0, y0 = _S(an["x0"]), _S(an["y0"])
+                x1, y1 = _S(an["x1"]), _S(an["y1"])
                 for i in range(esp):
-                    draw.rectangle([an["x0"]+i,an["y0"]+i,an["x1"]-i,an["y1"]-i],
-                                   outline=cor)
+                    draw.rectangle([x0+i,y0+i,x1-i,y1-i], outline=cor)
             elif t == "seta":
-                draw.line([an["x0"],an["y0"],an["x1"],an["y1"]], fill=cor, width=esp)
-                dx = an["x1"]-an["x0"]; dy = an["y1"]-an["y0"]
+                x0, y0 = _S(an["x0"]), _S(an["y0"])
+                x1, y1 = _S(an["x1"]), _S(an["y1"])
+                draw.line([x0,y0,x1,y1], fill=cor, width=esp)
+                dx = x1-x0; dy = y1-y0
                 ang = math.atan2(dy, dx); L = 20
                 for da in [0.4, -0.4]:
-                    ex = int(an["x1"] - L*math.cos(ang+da))
-                    ey = int(an["y1"] - L*math.sin(ang+da))
-                    draw.line([an["x1"],an["y1"],ex,ey], fill=cor, width=esp)
+                    ex = int(x1 - L*math.cos(ang+da))
+                    ey = int(y1 - L*math.sin(ang+da))
+                    draw.line([x1,y1,ex,ey], fill=cor, width=esp)
             elif t == "texto":
-                draw.text((an["x"],an["y"]), an["text"], fill=cor)
+                x, y = _S(an["x"]), _S(an["y"])
+                draw.text((x,y), an["text"], fill=cor)
             elif t == "caneta":
                 pts = an["pts"]
                 for i in range(len(pts)-1):
-                    draw.line([pts[i][0],pts[i][1],pts[i+1][0],pts[i+1][1]],
-                              fill=cor, width=esp)
+                    p0x, p0y = _S(pts[i][0]),   _S(pts[i][1])
+                    p1x, p1y = _S(pts[i+1][0]), _S(pts[i+1][1])
+                    draw.line([p0x,p0y,p1x,p1y], fill=cor, width=esp)
         path = self.ds.salvar_img(img)
         self.ds.add_msg(self.task_id, self.autor_id,
                         f"Anotação em {self.pdf_path.name}", [path])
@@ -1310,13 +1447,11 @@ class TarefasPage(tk.Frame):
 
             # anexos
             for anx in msg.get("anexos", []):
-                anx_p = Path(anx)
+                anx_p = Path(str(anx).replace("\\","/"))
                 ext   = anx_p.suffix.lower()
-                # tenta variações de caminho
-                found = next((p for p in [anx_p,
-                              Path(str(anx_p).replace("/","\\")),
-                              Path(str(anx_p).replace("\\","/"))]
-                              if p.exists()), None)
+                # Resolve usando o helper que entende paths novos (relativos)
+                # e antigos (absolutos de outro PC)
+                found = self.ds.resolver_anexo(anx)
                 if ext in (".png",".jpg",".jpeg",".bmp",".gif") and PIL_OK:
                     if found:
                         try:
@@ -1402,10 +1537,16 @@ class TarefasPage(tk.Frame):
                 title="Selecionar arquivos",
                 filetypes=[("Todos","*.*"),("PDF","*.pdf"),("Imagem","*.png *.jpg *.jpeg")])
             for pp in paths:
-                pp = Path(pp); dest = self.ds.app_data / "chat_imgs" / pp.name
-                self.ds.app_data.joinpath("chat_imgs").mkdir(exist_ok=True)
+                pp = Path(pp)
+                # Nome único para evitar colisões
+                ts_nome = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+                dest_dir = self.ds.app_data / "chat_imgs"
+                dest_dir.mkdir(exist_ok=True)
+                dest = dest_dir / f"{ts_nome}_{pp.name}"
                 shutil.copy2(str(pp), str(dest))
-                self._anexos.append(str(dest))
+                # Salva caminho RELATIVO à raiz para funcionar em outros PCs
+                rel = dest.relative_to(self.ds.raiz).as_posix()
+                self._anexos.append(rel)
                 if pp.suffix.lower() in (".png",".jpg",".jpeg") and PIL_OK:
                     mostrar_prev(Image.open(str(pp)))
             if paths:
@@ -1548,12 +1689,57 @@ class NovaTarefaDlg(tk.Toplevel):
         self.cb_disc["values"] = discs if discs else DISC_PADRAO
 
     def _preencher_pasta(self, pasta_str):
+        """Preenche obra e disciplina a partir de qualquer subpasta clicada
+        no Explorer. Sobe pelos ancestrais até achar uma 'obra' (nível
+        setor/obra do _obras_map). A disciplina é inferida da pasta filha
+        diretamente abaixo da obra, se existir nesse caminho."""
         self.v_pasta.set(pasta_str)
         p = Path(pasta_str)
+
+        # 1) Match exato no map (clicou na própria pasta da obra)
+        obra_path_str = None
         for k, v in self._obras_map.items():
-            if v == pasta_str: self.v_obra.set(k); break
+            if v == pasta_str:
+                self.v_obra.set(k)
+                obra_path_str = v
+                break
+
+        # 2) Não bateu — sobe pelos ancestrais procurando uma obra do map
+        if obra_path_str is None:
+            obras_paths = {v: k for k, v in self._obras_map.items()}
+            atual = p
+            while atual != atual.parent:
+                if str(atual) in obras_paths:
+                    self.v_obra.set(obras_paths[str(atual)])
+                    obra_path_str = str(atual)
+                    self.v_pasta.set(str(atual))  # tarefa fica na obra
+                    break
+                atual = atual.parent
+
         self.lbl_pasta.configure(text=p.name)
         self._update_discs()
+
+        # 3) Tenta inferir a DISCIPLINA: pasta-filha imediata da obra
+        #    que está no caminho clicado pelo usuário.
+        if obra_path_str:
+            try:
+                obra = Path(obra_path_str)
+                if p != obra and obra in p.parents:
+                    rel = p.relative_to(obra)
+                    primeiro = rel.parts[0] if rel.parts else None
+                    if primeiro:
+                        # Coloca a disciplina ainda que não esteja no padrão
+                        valores = list(self.cb_disc["values"]) if self.cb_disc["values"] else []
+                        if primeiro not in valores:
+                            self.cb_disc["values"] = valores + [primeiro]
+                        self.v_disc.set(primeiro)
+            except Exception:
+                pass
+
+        # 4) Sugere um título inicial baseado no nome da pasta clicada
+        #    (só se o usuário ainda não digitou nada)
+        if not self.v_titulo.get().strip():
+            self.v_titulo.set(p.name)
 
     def _criar(self):
         titulo = self.v_titulo.get().strip()
@@ -1669,7 +1855,11 @@ class App(tk.Tk):
                  bg=C["primary"], fg="#aac8de").pack(side="right", padx=(0,16))
         self.v_notif = tk.StringVar()
         self.lbl_notif = tk.Label(top, textvariable=self.v_notif, font=F_SMALL,
-                                  bg=C["err"], fg="white", padx=8)
+                                  bg=C["err"], fg="white", padx=8,
+                                  cursor="hand2")
+        # Clique no badge reabre o popup de mensagens não lidas
+        self.lbl_notif.bind("<Button-1>",
+                            lambda e: self._checar_msgs_abertura())
 
         # navbar
         nav = tk.Frame(self, bg=C["white"],
@@ -1716,7 +1906,7 @@ class App(tk.Tk):
             tasks   = self.ds.tasks()
             users   = {u["id"]: u for u in self.ds.users()}
             uid     = self.user["id"]
-            resumo  = []  # (titulo_tarefa, qtd_msgs_novas)
+            resumo  = []  # (titulo_tarefa, qtd_msgs_novas, task_id)
 
             for t in tasks:
                 # Só tarefas onde o usuário é autor ou responsável
@@ -1725,12 +1915,12 @@ class App(tk.Tk):
                 nao_lidas = [m for m in t.get("msgs", [])
                              if m["autor_id"] != uid]
                 if nao_lidas:
-                    resumo.append((t["titulo"], len(nao_lidas)))
+                    resumo.append((t["titulo"], len(nao_lidas), t["id"]))
 
             if not resumo:
                 return  # sem mensagens, não mostra nada
 
-            total = sum(q for _, q in resumo)
+            total = sum(q for _, q, _ in resumo)
 
             # Monta janela de notificação
             dlg = tk.Toplevel(self)
@@ -1741,7 +1931,7 @@ class App(tk.Tk):
             dlg.lift()
             dlg.focus_force()
 
-            w, h = 400, min(120 + len(resumo) * 36, 480)
+            w, h = 420, min(140 + len(resumo) * 44, 520)
             dlg.geometry(f"{w}x{h}+{(dlg.winfo_screenwidth()-w)//2}+"
                          f"{(dlg.winfo_screenheight()-h)//2}")
 
@@ -1752,39 +1942,66 @@ class App(tk.Tk):
                      font=("Segoe UI", 12, "bold"),
                      bg=C["primary"], fg="#ffffff").pack(anchor="w")
 
+            tk.Label(dlg, text="Clique em uma tarefa para abrir",
+                     font=F_SMALL, bg=C["white"], fg=C["text2"]).pack(
+                anchor="w", padx=20, pady=(8,0))
+
             # Lista de tarefas com msgs
-            body = tk.Frame(dlg, bg=C["white"], padx=20, pady=10)
+            body = tk.Frame(dlg, bg=C["white"], padx=20, pady=6)
             body.pack(fill="both", expand=True)
 
-            for titulo, qtd in resumo:
-                row = tk.Frame(body, bg=C["surface"],
-                               highlightthickness=1,
-                               highlightbackground=C["border"])
-                row.pack(fill="x", pady=3)
-                tk.Frame(row, bg=C["accent"], width=4).pack(side="left", fill="y")
-                inner = tk.Frame(row, bg=C["surface"], padx=10, pady=8)
-                inner.pack(side="left", fill="both", expand=True)
-                tk.Label(inner, text=titulo, font=("Segoe UI", 10, "bold"),
-                         bg=C["surface"], fg=C["text"], anchor="w").pack(fill="x")
-                tk.Label(inner, text=f"{qtd} mensagem(ns) nova(s)",
-                         font=F_SMALL, bg=C["surface"],
-                         fg=C["primary"], anchor="w").pack(fill="x")
-
-            # Botão fechar
-            btn_f = tk.Frame(dlg, bg=C["white"], pady=10)
-            btn_f.pack(fill="x")
-            def _ir_tarefas():
-                dlg.destroy()
+            def _abrir_tarefa(tid):
+                """Fecha a notificação, troca pra aba Tarefas e abre a tarefa."""
+                try:
+                    dlg.destroy()
+                except Exception:
+                    pass
+                # Troca aba
                 for n, p in self._pages.items(): p.pack_forget()
                 self._pages["tar"].pack(fill="both", expand=True)
                 for n, b in self._nav_btns.items():
                     b.configure(bg=C["primary"] if n=="tar" else C["white"],
                                 fg="#ffffff"    if n=="tar" else C["text2"])
-            btn(btn_f, "Ver tarefas", _ir_tarefas,
-                font=F_SMALL, pad=(14,6)).pack(side="right", padx=20)
+                # Abre a tarefa específica
+                self.after(120, lambda: self._pages["tar"]._abrir(tid))
+
+            for titulo, qtd, tid in resumo:
+                row = tk.Frame(body, bg=C["surface"],
+                               highlightthickness=1,
+                               highlightbackground=C["border"],
+                               cursor="hand2")
+                row.pack(fill="x", pady=3)
+                bar = tk.Frame(row, bg=C["accent"], width=4)
+                bar.pack(side="left", fill="y")
+                inner = tk.Frame(row, bg=C["surface"], padx=10, pady=8,
+                                 cursor="hand2")
+                inner.pack(side="left", fill="both", expand=True)
+                lab1 = tk.Label(inner, text=titulo, font=("Segoe UI", 10, "bold"),
+                         bg=C["surface"], fg=C["text"], anchor="w",
+                         cursor="hand2")
+                lab1.pack(fill="x")
+                lab2 = tk.Label(inner, text=f"{qtd} mensagem(ns) nova(s)  ›",
+                         font=F_SMALL, bg=C["surface"],
+                         fg=C["primary"], anchor="w", cursor="hand2")
+                lab2.pack(fill="x")
+                # Bind click em todo o card
+                for w_ in (row, bar, inner, lab1, lab2):
+                    w_.bind("<Button-1>", lambda e, t=tid: _abrir_tarefa(t))
+                # Hover
+                def _hov_in(_e, _r=row):
+                    _r.configure(highlightbackground=C["primary"])
+                def _hov_out(_e, _r=row):
+                    _r.configure(highlightbackground=C["border"])
+                for w_ in (row, bar, inner, lab1, lab2):
+                    w_.bind("<Enter>", _hov_in)
+                    w_.bind("<Leave>", _hov_out)
+
+            # Botão fechar
+            btn_f = tk.Frame(dlg, bg=C["white"], pady=10)
+            btn_f.pack(fill="x")
             btn(btn_f, "Fechar", dlg.destroy,
                 bg=C["surface"], fg=C["text2"],
-                font=F_SMALL, pad=(14,6)).pack(side="right", padx=(0,6))
+                font=F_SMALL, pad=(14,6)).pack(side="right", padx=20)
 
         except Exception as e:
             print(f"Erro ao checar msgs: {e}")
