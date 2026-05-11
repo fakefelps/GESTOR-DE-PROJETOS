@@ -646,18 +646,15 @@ class ExploradorPage(tk.Frame):
                     iid = self.tree.insert("", "end", text=f"📁  {obra.name}",
                                            values=[str(obra)], tags=["pasta"])
                     self._fill_children_busca(iid, obra)
-                    self.tree.item(iid, open=True)
             else:
                 # Obras dentro de um setor: mostra o setor como pai,
                 # mas apenas com as obras que batem — não o setor inteiro
                 s_iid = self.tree.insert("", "end", text=f"📁  {setor.name}",
                                          values=[str(setor)], tags=["pasta"])
-                self.tree.item(s_iid, open=True)
                 for obra in obras:
                     o_iid = self.tree.insert(s_iid, "end", text=f"📁  {obra.name}",
                                               values=[str(obra)], tags=["pasta"])
                     self._fill_children_busca(o_iid, obra)
-                    self.tree.item(o_iid, open=True)
 
     def _fill_children_busca(self, iid, path):
         try:
