@@ -600,24 +600,64 @@ class ExploradorPage(tk.Frame):
         except Exception:
             matches = []
 
-        # Determina quais pastas de obra (nível 1 da raiz) devem ser exibidas
-        # por completo — seja porque o match caiu nelas diretamente, seja
-        # porque um arquivo dentro delas bate o filtro.
+        # Para cada match, encontra o ancestral cujo NOME contém o termo
+        # (a pasta da "obra"). Se o próprio match já tem o termo no nome
+        # e é pasta, ela é a obra a exibir. Caso contrário sobe a árvore
+        # procurando o ancestral mais PROFUNDO cujo nome contém o termo.
+        # Isso garante que o setor (.RES TERRA BELLA) nunca seja exibido
+        # inteiro — apenas as subpastas cujo nome bate o filtro.
         obras_a_mostrar = set()
         for path in matches:
-            # Sobe até encontrar o filho direto da raiz (a "obra")
-            p = path
-            while p.parent != self.ds.raiz and p.parent != p:
-                p = p.parent
-            if p.parent == self.ds.raiz and p.is_dir():
-                obras_a_mostrar.add(p)
+            # Candidato inicial: o próprio path se for pasta, ou seu pai
+            candidato = path if path.is_dir() else path.parent
+            # Se o candidato já está na raiz, adiciona direto
+            if candidato.parent == self.ds.raiz:
+                if candidato.is_dir():
+                    obras_a_mostrar.add(candidato)
+                continue
+            # Verifica se o nome do candidato contém o termo;
+            # se sim, é a pasta que queremos mostrar
+            if termo in candidato.name.lower():
+                obras_a_mostrar.add(candidato)
+            else:
+                # O match foi em um arquivo/subpasta dentro de uma obra;
+                # sobe apenas UM nível abaixo do setor (ou da raiz)
+                # para pegar a pasta da obra, não o setor inteiro.
+                p = candidato
+                # Sobe enquanto o avô não for a raiz (ou não existir)
+                while p.parent.parent != self.ds.raiz and \
+                      p.parent != self.ds.raiz and \
+                      p.parent != p:
+                    p = p.parent
+                if p.is_dir():
+                    obras_a_mostrar.add(p)
 
-        obras_a_mostrar = sorted(obras_a_mostrar, key=lambda x: x.name.lower())
+        # Agrupa obras por setor para exibição hierárquica
+        setor_obras: dict = {}
         for obra in obras_a_mostrar:
-            iid = self.tree.insert("", "end", text=f"📁  {obra.name}",
-                                   values=[str(obra)], tags=["pasta"])
-            self._fill_children_busca(iid, obra)
-            self.tree.item(iid, open=True)
+            setor = obra.parent
+            setor_obras.setdefault(setor, set()).add(obra)
+
+        for setor in sorted(setor_obras.keys(), key=lambda x: x.name.lower()):
+            obras = sorted(setor_obras[setor], key=lambda x: x.name.lower())
+            if setor == self.ds.raiz:
+                # Obras direto na raiz: insere sem pai
+                for obra in obras:
+                    iid = self.tree.insert("", "end", text=f"📁  {obra.name}",
+                                           values=[str(obra)], tags=["pasta"])
+                    self._fill_children_busca(iid, obra)
+                    self.tree.item(iid, open=True)
+            else:
+                # Obras dentro de um setor: mostra o setor como pai,
+                # mas apenas com as obras que batem — não o setor inteiro
+                s_iid = self.tree.insert("", "end", text=f"📁  {setor.name}",
+                                         values=[str(setor)], tags=["pasta"])
+                self.tree.item(s_iid, open=True)
+                for obra in obras:
+                    o_iid = self.tree.insert(s_iid, "end", text=f"📁  {obra.name}",
+                                              values=[str(obra)], tags=["pasta"])
+                    self._fill_children_busca(o_iid, obra)
+                    self.tree.item(o_iid, open=True)
 
     def _fill_children_busca(self, iid, path):
         try:
