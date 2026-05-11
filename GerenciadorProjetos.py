@@ -211,15 +211,33 @@ class DataStore:
             pass
         return None
 
-    def msgs_novas(self, uid, janela_seg=300):
-        agora = datetime.now()
+    def msgs_novas(self, uid):
+        """Retorna mensagens de outros usuários que o uid ainda não marcou como lidas."""
+        lidas = self._carregar_lidas(uid)
         res = []
         for t in self.tasks():
             for m in t.get("msgs", []):
                 if m["autor_id"] == uid: continue
-                if (agora - datetime.fromisoformat(m["ts"])).total_seconds() < janela_seg:
+                if m["id"] not in lidas:
                     res.append((t, m))
         return res
+
+    def _path_lidas(self, uid):
+        return self.app_data / f"read_{uid[:8]}.json"
+
+    def _carregar_lidas(self, uid):
+        p = self._path_lidas(uid)
+        try:
+            return set(json.loads(p.read_text(encoding="utf-8")))
+        except Exception:
+            return set()
+
+    def marcar_lidas(self, uid, msg_ids):
+        """Persiste os IDs de mensagens lidas para o usuário."""
+        lidas = self._carregar_lidas(uid)
+        lidas.update(msg_ids)
+        p = self._path_lidas(uid)
+        p.write_text(json.dumps(list(lidas), ensure_ascii=False), encoding="utf-8")
 
 # ══════════════════════════════════════════════════════════════════════════════
 # HELPERS UI
@@ -576,40 +594,30 @@ class ExploradorPage(tk.Frame):
         if not termo:
             self._carregar_arvore(); return
         self.tree.delete(*self.tree.get_children())
-        iid_map = {}
-        # Coleta todos os itens cujo NOME bate o termo
         try:
             matches = [p for p in self.ds.raiz.rglob("*")
                        if APP_DATA not in p.parts and termo in p.name.lower()]
         except Exception:
             matches = []
-        matches.sort()
+
+        # Determina quais pastas de obra (nível 1 da raiz) devem ser exibidas
+        # por completo — seja porque o match caiu nelas diretamente, seja
+        # porque um arquivo dentro delas bate o filtro.
+        obras_a_mostrar = set()
         for path in matches:
-            # Constrói o caminho da raiz até o item, criando ancestrais (sem
-            # preencher os filhos não-relacionados) — só os ancestrais.
-            partes = []
+            # Sobe até encontrar o filho direto da raiz (a "obra")
             p = path
-            while p != self.ds.raiz:
-                partes.insert(0, p); p = p.parent
-            par_iid = ""
-            for parte in partes:
-                k = str(parte)
-                if k not in iid_map:
-                    if parte.is_dir():
-                        lbl_txt = f"📁  {parte.name}"
-                        if parte.parent.parent == self.ds.raiz:
-                            lbl_txt = f"📁  {parte.name}  ({parte.parent.name})"
-                        iid = self.tree.insert(par_iid, "end", text=lbl_txt,
-                                               values=[k], tags=["pasta"])
-                    else:
-                        ext = parte.suffix.lower()
-                        ic  = {"pdf":"📕 PDF","rvt":"🏗 RVT","dwg":"📐 DWG","xlsx":"📊 XLS","xls":"📊 XLS","docx":"📝 DOC","doc":"📝 DOC","png":"🖼 PNG","jpg":"🖼 JPG","jpeg":"🖼 JPG","dwf":"📄 DWF","ifc":"📄 IFC","skp":"📄 SKP","mp4":"🎥 MP4","zip":"📦 ZIP"}.get(ext.lstrip("."), "📄")
-                        tg  = "pdf" if ext == ".pdf" else "arquivo"
-                        iid = self.tree.insert(par_iid, "end",
-                                               text=f"{ic}  {parte.name}",
-                                               values=[k], tags=[tg])
-                    iid_map[k] = iid
-                par_iid = iid_map[k]
+            while p.parent != self.ds.raiz and p.parent != p:
+                p = p.parent
+            if p.parent == self.ds.raiz and p.is_dir():
+                obras_a_mostrar.add(p)
+
+        obras_a_mostrar = sorted(obras_a_mostrar, key=lambda x: x.name.lower())
+        for obra in obras_a_mostrar:
+            iid = self.tree.insert("", "end", text=f"📁  {obra.name}",
+                                   values=[str(obra)], tags=["pasta"])
+            self._fill_children_busca(iid, obra)
+            self.tree.item(iid, open=True)
 
     def _fill_children_busca(self, iid, path):
         try:
@@ -634,6 +642,12 @@ class ExploradorPage(tk.Frame):
         tb.pack(fill="x")
         tk.Label(tb, text="Visualizador de PDF", bg=C["surface"],
                  fg=C["text2"], font=F_SMALL).pack(side="left")
+
+        # Botão fechar PDF (à direita do label, lado esquerdo da barra)
+        self._btn_fechar_pdf = btn(tb, "✕ Fechar", self._fechar_pdf,
+                                   bg=C["surface"], fg=C["err"],
+                                   font=F_SMALL, pad=(8,2))
+        # Só será exibido quando houver PDF aberto
 
         ctrl = tk.Frame(tb, bg=C["surface"]); ctrl.pack(side="right")
         btn(ctrl, "−", self._zoom_out, bg=C["surface"], fg=C["text2"],
@@ -680,9 +694,24 @@ class ExploradorPage(tk.Frame):
         try:
             self._pdf_doc = fitz.open(str(path))
             self._pdf_page = 0; self._zoom = 1.0
+            self._btn_fechar_pdf.pack(side="left", padx=(8, 0))
             self._render_pdf()
         except Exception as e:
             messagebox.showerror("Erro ao abrir PDF", str(e))
+
+    def _fechar_pdf(self):
+        try:
+            if self._pdf_doc:
+                self._pdf_doc.close()
+                self._pdf_doc = None
+        except: pass
+        self._btn_fechar_pdf.pack_forget()
+        self.v_pg.set("–")
+        self.v_zoom.set("100%")
+        self.cv.delete("all")
+        self.cv.create_text(300, 180,
+                            text="Dê duplo clique em um PDF\npara visualizá-lo aqui",
+                            fill=C["text2"], font=F_HEAD, justify="center")
 
     def _render_pdf(self):
         if not self._pdf_doc: return
@@ -1213,10 +1242,14 @@ class TarefasPage(tk.Frame):
             w.bind("<Enter>",    lambda e, fw=f: fw.configure(highlightbackground=C["primary"]))
             w.bind("<Leave>",    lambda e, fw=f: fw.configure(highlightbackground=C["border"]))
 
-    # ── Detalhe ───────────────────────────────────────────────────────────────
     def _abrir(self, tid):
         task = self.ds.get_task(tid)
         if not task: return
+        # Marca como lidas todas as msgs de outros usuários nesta tarefa
+        ids_para_marcar = [m["id"] for m in task.get("msgs", [])
+                           if m["autor_id"] != self.user["id"]]
+        if ids_para_marcar:
+            self.ds.marcar_lidas(self.user["id"], ids_para_marcar)
         for w in self.detalhe.winfo_children(): w.destroy()
         self._build_detalhe(task)
 
@@ -1918,6 +1951,7 @@ class App(tk.Tk):
             tasks   = self.ds.tasks()
             users   = {u["id"]: u for u in self.ds.users()}
             uid     = self.user["id"]
+            lidas   = self.ds._carregar_lidas(uid)
             resumo  = []  # (titulo_tarefa, qtd_msgs_novas, task_id)
 
             for t in tasks:
@@ -1925,7 +1959,7 @@ class App(tk.Tk):
                 if t.get("autor_id") != uid and uid not in t.get("resp_ids", [t.get("resp_id","")]):
                     continue
                 nao_lidas = [m for m in t.get("msgs", [])
-                             if m["autor_id"] != uid]
+                             if m["autor_id"] != uid and m["id"] not in lidas]
                 if nao_lidas:
                     resumo.append((t["titulo"], len(nao_lidas), t["id"]))
 
